@@ -1,7 +1,7 @@
 ARG ALPINE_VERSION=3.20
 ARG GOLANG_VERSION=1.22.5
 
-FROM golang:${GOLANG_VERSION}-alpine AS builder
+FROM docker.io/library/golang:${GOLANG_VERSION}-alpine AS builder
 COPY . /build
 RUN cd /build && go build -o tsukasa
 
