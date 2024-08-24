@@ -110,7 +110,7 @@ func CreateService(serviceContext *ServiceContext, name string, config *ServiceC
 func (s *Service) Listen() (listener net.Listener, cleanup func(), err error) {
 	switch s.ListenType {
 	case AddressTCP:
-		listener, err = net.Listen("tcp", s.ListenAddress+":"+strconv.Itoa(int(s.ListenPort)))
+		listener, err = net.Listen("tcp", net.JoinHostPort(s.ListenAddress, strconv.Itoa(int(s.ListenPort))))
 		cleanup = func() {
 			listener.Close()
 		}
