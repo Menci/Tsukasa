@@ -5,6 +5,7 @@ Tsusaka is a flexible port forwarder among:
 * TCP Ports
 * UNIX Sockets
 * Tailscale TCP Ports (without Tailscale daemon or TUN/TAP permission! This is made possible with [tsnet](https://tailscale.com/kb/1244/tsnet))
+  * Also supports SOCKS5/HTTP proxy feature of `tailscaled`.
   * If you don't use Tailscale features, it won't initialize Tailscale components and just behaves like a local port forwarder.
 
 It also supports passing the client IP with PROXY protocol (for listening on TCP or Tailscale TCP).
@@ -24,6 +25,8 @@ Use with command-line configuration:
           --ts-authkey "$TS_AUTHKEY" \
           --ts-ephemeral false \
           --ts-state-dir /var/lib/tailscale \
+          --ts-listen-socks5 localhost:1080 \
+          --ts-listen-http localhost:8080 \
           --ts-verbose true \
           nginx,listen=tailscale://0.0.0.0:80,connect=tcp://127.0.0.1:8080,log-level=info,proxy-protocol \
           myapp,listen=unix:/var/run/myapp.sock,connect=tailscale://app-hosted-in-tailnet:8080
@@ -39,6 +42,9 @@ tailscale:
   authKey: null
   ephemeral: false
   stateDir: /var/lib/tailscale
+  listen:
+    socks5: 1080
+    http: 8080
   verbose: true
 services:
   nginx:

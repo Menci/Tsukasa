@@ -26,3 +26,7 @@ go.work.sum
 
 # built binary
 /tsukasa
+
+# debug
+/config.yaml
+/state

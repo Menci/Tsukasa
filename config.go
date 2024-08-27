@@ -5,17 +5,24 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v2"
 )
 
+type TailscaleListenConfig struct {
+	Socks5 string `yaml:"socks5,omitempty"`
+	HTTP   string `yaml:"http,omitempty"`
+}
+
 type TailscaleConfig struct {
-	Hostname  string `yaml:"hostname,omitempty"`
-	AuthKey   string `yaml:"authKey"`
-	Ephemeral bool   `yaml:"ephemeral,omitempty"`
-	StateDir  string `yaml:"stateDir"`
-	Verbose   bool   `yaml:"verbose,omitempty"`
+	Hostname  string                `yaml:"hostname,omitempty"`
+	AuthKey   string                `yaml:"authKey"`
+	Ephemeral bool                  `yaml:"ephemeral,omitempty"`
+	StateDir  string                `yaml:"stateDir"`
+	Listen    TailscaleListenConfig `yaml:"listen,omitempty"`
+	Verbose   bool                  `yaml:"verbose,omitempty"`
 }
 
 type ServiceConfig struct {
@@ -47,27 +54,48 @@ type Config struct {
 	Services  map[string]*ServiceConfig `yaml:"services"`
 }
 
-// A private struct to hold the command-line flags
+type boolFlag struct {
+	value bool
+	set   bool
+}
+
+func (f *boolFlag) Set(value string) error {
+	v, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	f.value = v
+	f.set = true
+	return nil
+}
+
+func (f *boolFlag) String() string {
+	return strconv.FormatBool(f.value)
+}
+
 type arguments struct {
-	conf        *string
-	tsHostname  *string
-	tsAuthKey   *string
-	tsEphemeral *bool
-	tsStateDir  *string
-	tsVerbose   *bool
+	conf           string
+	tsHostname     string
+	tsAuthKey      string
+	tsEphemeral    boolFlag
+	tsStateDir     string
+	tsListenSocks5 string
+	tsListenHttp   string
+	tsVerbose      boolFlag
 
 	services []string
 }
 
 func parseArguments() *arguments {
-	flags := &arguments{
-		conf:        flag.String("conf", "", "YAML Configuration file"),
-		tsHostname:  flag.String("ts-hostname", "", "Tailscale hostname"),
-		tsAuthKey:   flag.String("ts-authkey", "", "Tailscale authentication key (default to $TS_AUTHKEY)"),
-		tsEphemeral: flag.Bool("ts-ephemeral", false, "Set the Tailscale host to ephemeral"),
-		tsStateDir:  flag.String("ts-state-dir", "", "Tailscale state directory"),
-		tsVerbose:   flag.Bool("ts-verbose", false, "Print Tailscale logs"),
-	}
+	flags := &arguments{}
+	flag.StringVar(&flags.conf, "conf", "", "YAML Configuration file")
+	flag.StringVar(&flags.tsHostname, "ts-hostname", "", "Tailscale hostname")
+	flag.StringVar(&flags.tsAuthKey, "ts-authkey", "", "Tailscale authentication key (default to $TS_AUTHKEY)")
+	flag.Var(&flags.tsEphemeral, "ts-ephemeral", "Set the Tailscale host to ephemeral")
+	flag.StringVar(&flags.tsStateDir, "ts-state-dir", "", "Tailscale state directory")
+	flag.StringVar(&flags.tsListenSocks5, "ts-listen-socks5", "", "Start SOCKS5 proxy server on [host]:port to access Tailnet")
+	flag.StringVar(&flags.tsListenHttp, "ts-listen-http", "", "Start HTTP proxy server on [host]:port to access Tailnet")
+	flag.Var(&flags.tsVerbose, "ts-verbose", "Print Tailscale logs")
 	flag.Usage = func() {
 		f := flag.CommandLine.Output()
 		fmt.Fprintf(f, "Usage: %s [options] service1 service2 ...\n", os.Args[0])
@@ -78,10 +106,11 @@ func parseArguments() *arguments {
 		fmt.Fprintln(f, "    --ts-authkey \"$TS_AUTHKEY\" \\")
 		fmt.Fprintln(f, "    --ts-ephemeral false \\")
 		fmt.Fprintln(f, "    --ts-state-dir /var/lib/tailscale \\")
+		fmt.Fprintln(f, "    --ts-listen-socks5 127.0.0.1:1118 \\")
+		fmt.Fprintln(f, "    --ts-listen-http 127.0.0.1:8080 \\")
 		fmt.Fprintln(f, "    --ts-verbose true \\")
 		fmt.Fprintln(f, "    nginx,listen=tailscale://0.0.0.0:80,connect=tcp://127.0.0.1:8080,log-level=info,proxy-protocol \\")
 		fmt.Fprintln(f, "    myapp,listen=unix:/var/run/myapp.sock,connect=tailscale://app-hosted-in-tailnet:8080")
-
 	}
 	flag.Parse()
 	flags.services = flag.Args()
@@ -147,24 +176,32 @@ func parseService(s string) (name string, service *ServiceConfig, err error) {
 }
 
 func mergeConfig(c *Config, a *arguments) error {
-	if a.tsHostname != nil && *a.tsHostname != "" {
-		c.Tailscale.Hostname = *a.tsHostname
+	if a.tsHostname != "" {
+		c.Tailscale.Hostname = a.tsHostname
 	}
 
-	if a.tsAuthKey != nil && *a.tsAuthKey != "" {
-		c.Tailscale.AuthKey = *a.tsAuthKey
+	if a.tsAuthKey != "" {
+		c.Tailscale.AuthKey = a.tsAuthKey
 	}
 
-	if a.tsEphemeral != nil {
-		c.Tailscale.Ephemeral = *a.tsEphemeral
+	if a.tsEphemeral.set {
+		c.Tailscale.Ephemeral = a.tsEphemeral.value
 	}
 
-	if a.tsStateDir != nil && *a.tsStateDir != "" {
-		c.Tailscale.StateDir = *a.tsStateDir
+	if a.tsStateDir != "" {
+		c.Tailscale.StateDir = a.tsStateDir
 	}
 
-	if a.tsVerbose != nil {
-		c.Tailscale.Verbose = *a.tsVerbose
+	if a.tsListenSocks5 != "" {
+		c.Tailscale.Listen.Socks5 = a.tsListenSocks5
+	}
+
+	if a.tsListenHttp != "" {
+		c.Tailscale.Listen.HTTP = a.tsListenHttp
+	}
+
+	if a.tsVerbose.set {
+		c.Tailscale.Verbose = a.tsVerbose.value
 	}
 
 	for _, s := range a.services {
@@ -211,8 +248,8 @@ func GetConfig() (*Config, error) {
 		Tailscale: TailscaleConfig{},
 		Services:  make(map[string]*ServiceConfig),
 	}
-	if *a.conf != "" {
-		f, err := os.Open(*a.conf)
+	if a.conf != "" {
+		f, err := os.Open(a.conf)
 		if err != nil {
 			return nil, err
 		}

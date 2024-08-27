@@ -1,0 +1,20 @@
+# Tailscale configuration is not required and Tailsccale will not be loaded if no services with Tailscale defined.
+tailscale:
+  hostname: Tsusaka
+  # `null` to Use `TS_AUTHKEY` from environment or interactive login.
+  authKey: null
+  ephemeral: false
+  stateDir: /var/lib/tailscale
+  listen:
+    socks5: 1080
+    http: 8080
+  verbose: true
+services:
+  nginx:
+    listen: tailscale://0.0.0.0:80 # Only "0.0.0.0" and "::" allowed in Tailscale listener.
+    connect: tcp://127.0.0.1:8080
+    logLevel: info # "error" / "info" / "verbose". By default "info".
+    proxyProtocol: true # Listening on UNIX socket doesn't support PROXY protocol.
+  myapp:
+    listen: unix:/var/run/myapp.sock
+    connect: tailscale://app-hosted-in-tailnet:8080

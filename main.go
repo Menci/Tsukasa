@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -13,7 +12,7 @@ import (
 type Logf func(format string, args ...any)
 
 func main() {
-	logger := CreateLogger("tsukasa", Info)
+	logger := CreateLogger("main", Info)
 
 	config, err := GetConfig()
 	if err != nil {
@@ -29,12 +28,16 @@ func main() {
 	tsnet.AuthKey = config.Tailscale.AuthKey
 	tsnet.Ephemeral = config.Tailscale.Ephemeral
 	tsnet.Dir = config.Tailscale.StateDir
-	tsnet.UserLogf = log.New(os.Stderr, "[tsnet] ", log.LstdFlags).Printf
+
+	var tsLogLevel LogLevel
 	if config.Tailscale.Verbose {
-		tsnet.Logf = tsnet.UserLogf
+		tsLogLevel = Verbose
 	} else {
-		tsnet.Logf = func(format string, args ...any) {}
+		tsLogLevel = Info
 	}
+	tsLogger := CreateLogger("tailscale", tsLogLevel)
+	tsnet.Logf = tsLogger.Verbosef
+	tsnet.UserLogf = tsLogger.Infof
 
 	shutdownCh := make(chan struct{})
 	shutdownWg := &sync.WaitGroup{}
@@ -45,6 +48,10 @@ func main() {
 	}
 
 	usingTailscale := false
+	if config.Tailscale.Listen.Socks5 != "" || config.Tailscale.Listen.HTTP != "" {
+		usingTailscale = true
+	}
+
 	var services []*Service
 	for name, serviceConfig := range config.Services {
 		service, err := CreateService(serviceContext, name, serviceConfig)
@@ -70,12 +77,25 @@ func main() {
 		defer tsnet.Close()
 	}
 
-	// Start services.
-	if len(services) == 0 {
-		logger.Fatalf("no services defined. run %s -h for help", os.Args[0])
+	somethingRunning := false
+
+	if config.Tailscale.Listen.Socks5 != "" {
+		somethingRunning = true
+		StartProxy(tsLogger, config.Tailscale.Listen.Socks5, tsnet.Dial, Socks5)
 	}
+	if config.Tailscale.Listen.HTTP != "" {
+		somethingRunning = true
+		StartProxy(tsLogger, config.Tailscale.Listen.HTTP, tsnet.Dial, HTTP)
+	}
+
+	// Start services.
 	for _, service := range services {
+		somethingRunning = true
 		go service.Start()
+	}
+
+	if !somethingRunning {
+		logger.Fatalf("no listener defined. run %s -h for help", os.Args[0])
 	}
 
 	// Wait for signal to shutdown.
