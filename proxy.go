@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"os"
 	"strings"
 
 	"tailscale.com/net/socks5"
@@ -89,7 +90,24 @@ const (
 type Dialer func(ctx context.Context, network, address string) (net.Conn, error)
 
 func StartProxy(logger *Logger, address string, dialer Dialer, proxyType ProxyType) {
-	listener, err := net.Listen("tcp", address)
+	var listener net.Listener
+	var err error
+	var cleanup func()
+
+	if strings.HasPrefix(address, "unix:") {
+		filename := address[5:]
+		listener, err = net.Listen("unix", filename)
+		cleanup = func() {
+			listener.Close()
+			os.Remove(filename)
+		}
+	} else {
+		listener, err = net.Listen("tcp", address)
+		cleanup = func() {
+			listener.Close()
+		}
+	}
+
 	if err != nil {
 		logger.Fatalf("failed to start %s proxy on %s: %v", proxyType, address, err)
 	}
@@ -112,7 +130,9 @@ func StartProxy(logger *Logger, address string, dialer Dialer, proxyType ProxyTy
 	}
 
 	go func() {
-		if err := serve(listener); err != nil {
+		err := serve(listener)
+		cleanup()
+		if err != nil {
 			logger.Fatalf("failed to serve %s proxy on %s: %v", proxyType, address, err)
 		}
 	}()
