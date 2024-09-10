@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v2"
 )
@@ -30,8 +31,10 @@ type ServiceConfig struct {
 	Connect       string `yaml:"connect"`
 	logLevel      string `yaml:"logLevel,omitempty"`
 	ProxyProtocol bool   `yaml:"proxyProtocol,omitempty"`
+	timeout       string `yaml:"timeout,omitempty"`
 
 	LogLevel LogLevel
+	Timeout  time.Duration
 }
 
 func parseLogLevel(s string) (LogLevel, error) {
@@ -50,8 +53,11 @@ func parseLogLevel(s string) (LogLevel, error) {
 }
 
 type Config struct {
+	timeout   string                    `yaml:"timeout,omitempty"`
 	Tailscale TailscaleConfig           `yaml:"tailscale"`
 	Services  map[string]*ServiceConfig `yaml:"services"`
+
+	Timeout time.Duration
 }
 
 type boolFlag struct {
@@ -75,6 +81,7 @@ func (f *boolFlag) String() string {
 
 type arguments struct {
 	conf           string
+	timeout        string
 	tsHostname     string
 	tsAuthKey      string
 	tsEphemeral    boolFlag
@@ -89,6 +96,7 @@ type arguments struct {
 func parseArguments() *arguments {
 	flags := &arguments{}
 	flag.StringVar(&flags.conf, "conf", "", "YAML Configuration file")
+	flag.StringVar(&flags.timeout, "timeout", "", "Default connection timeout of services (and Tailscale proxies)")
 	flag.StringVar(&flags.tsHostname, "ts-hostname", "", "Tailscale hostname")
 	flag.StringVar(&flags.tsAuthKey, "ts-authkey", "", "Tailscale authentication key (default to $TS_AUTHKEY)")
 	flag.Var(&flags.tsEphemeral, "ts-ephemeral", "Set the Tailscale host to ephemeral")
@@ -102,6 +110,7 @@ func parseArguments() *arguments {
 		fmt.Fprint(f, "\nTsukasa - A flexible port forwarder among TCP, UNIX Socket and Tailscale TCP ports.\n\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(f, "\nExample: %s \\\n", os.Args[0])
+		fmt.Fprintln(f, "    --timeout 10s \\")
 		fmt.Fprintln(f, "    --ts-hostname Tsukasa \\")
 		fmt.Fprintln(f, "    --ts-authkey \"$TS_AUTHKEY\" \\")
 		fmt.Fprintln(f, "    --ts-ephemeral false \\")
@@ -167,6 +176,11 @@ func parseService(s string) (name string, service *ServiceConfig, err error) {
 				return "", nil, fmt.Errorf("no value expected for option `proxy-protocol`")
 			}
 			service.ProxyProtocol = true
+		case "timeout":
+			if value == nil {
+				return "", nil, fmt.Errorf("required value for option `timeout`")
+			}
+			service.timeout = *value
 		default:
 			return "", nil, fmt.Errorf("unknown service argument: %s", key)
 		}
@@ -176,6 +190,10 @@ func parseService(s string) (name string, service *ServiceConfig, err error) {
 }
 
 func mergeConfig(c *Config, a *arguments) error {
+	if a.timeout != "" {
+		c.timeout = a.timeout
+	}
+
 	if a.tsHostname != "" {
 		c.Tailscale.Hostname = a.tsHostname
 	}
@@ -227,7 +245,7 @@ func (c *Config) ValidateTailscaleConfig() error {
 	return nil
 }
 
-func (c *Config) ValidateServices() error {
+func (c *Config) ProcessServices() error {
 	for name, service := range c.Services {
 		if service.Listen == "" {
 			return fmt.Errorf("missing listen address for service %s", name)
@@ -235,6 +253,16 @@ func (c *Config) ValidateServices() error {
 
 		if service.Connect == "" {
 			return fmt.Errorf("missing connect address for service %s", name)
+		}
+
+		if service.timeout == "" {
+			service.Timeout = c.Timeout
+		} else {
+			if timeout, err := time.ParseDuration(service.timeout); err != nil {
+				return fmt.Errorf("invalid timeout for service %s: %v", name, err)
+			} else {
+				service.Timeout = timeout
+			}
 		}
 	}
 
@@ -262,6 +290,14 @@ func GetConfig() (*Config, error) {
 
 	if err := mergeConfig(c, a); err != nil {
 		return nil, err
+	}
+
+	if c.timeout != "" {
+		if timeout, err := time.ParseDuration(c.timeout); err != nil {
+			return nil, fmt.Errorf("invalid default timeout: %v", err)
+		} else {
+			c.Timeout = timeout
+		}
 	}
 
 	if c.Tailscale.AuthKey == "" {

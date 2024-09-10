@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"net"
 	"os"
 	"os/signal"
 	"sync"
@@ -19,7 +21,7 @@ func main() {
 		logger.Fatalf("invalid config: %v", err)
 	}
 
-	if err := config.ValidateServices(); err != nil {
+	if err := config.ProcessServices(); err != nil {
 		logger.Fatalf("invalid service config: %v", err)
 	}
 
@@ -79,13 +81,20 @@ func main() {
 
 	somethingRunning := false
 
-	if config.Tailscale.Listen.Socks5 != "" {
-		somethingRunning = true
-		StartProxy(tsLogger, config.Tailscale.Listen.Socks5, tsnet.Dial, Socks5)
-	}
-	if config.Tailscale.Listen.HTTP != "" {
-		somethingRunning = true
-		StartProxy(tsLogger, config.Tailscale.Listen.HTTP, tsnet.Dial, HTTP)
+	if config.Tailscale.Listen.Socks5 != "" || config.Tailscale.Listen.HTTP != "" {
+		proxyDial := func(ctx context.Context, network, address string) (net.Conn, error) {
+			ctx2, cancel := context.WithTimeout(ctx, config.Timeout)
+			defer cancel()
+			return tsnet.Dial(ctx2, network, address)
+		}
+		if config.Tailscale.Listen.Socks5 != "" {
+			somethingRunning = true
+			StartProxy(tsLogger, config.Tailscale.Listen.Socks5, proxyDial, Socks5)
+		}
+		if config.Tailscale.Listen.HTTP != "" {
+			somethingRunning = true
+			StartProxy(tsLogger, config.Tailscale.Listen.HTTP, proxyDial, HTTP)
+		}
 	}
 
 	// Start services.

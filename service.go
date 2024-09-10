@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"tailscale.com/tsnet"
 )
@@ -39,6 +40,7 @@ type Service struct {
 	ConnectPort          int16
 	ConnectProxyProtocol bool
 	LogLevel             LogLevel
+	Timeout              time.Duration
 }
 
 func parsePort(portString string) (int16, error) {
@@ -95,8 +97,9 @@ func CreateService(serviceContext *ServiceContext, name string, config *ServiceC
 		ServiceContext:       serviceContext,
 		Config:               config,
 		Name:                 name,
-		LogLevel:             config.LogLevel,
 		ConnectProxyProtocol: config.ProxyProtocol,
+		LogLevel:             config.LogLevel,
+		Timeout:              config.Timeout,
 	}
 	if service.ListenType, service.ListenAddress, service.ListenPort, err = parseUrl(urlTypeListen, config.Listen); err != nil {
 		return nil, err
@@ -135,15 +138,17 @@ func (s *Service) CreateConnector() (func() (net.Conn, error), error) {
 	switch s.ConnectType {
 	case AddressTCP:
 		return func() (net.Conn, error) {
-			return net.Dial("tcp", s.ConnectAddress+":"+strconv.Itoa(int(s.ConnectPort)))
+			return net.DialTimeout("tcp", s.ConnectAddress+":"+strconv.Itoa(int(s.ConnectPort)), s.Timeout)
 		}, nil
 	case AddressUNIXSocket:
 		return func() (net.Conn, error) {
-			return net.Dial("unix", s.ConnectAddress)
+			return net.DialTimeout("unix", s.ConnectAddress, s.Timeout)
 		}, nil
 	case AddressTailscaleTCP:
 		return func() (net.Conn, error) {
-			return s.ServiceContext.TsNet.Dial(context.Background(), "tcp", s.ConnectAddress+":"+strconv.Itoa(int(s.ConnectPort)))
+			ctx, cancel := context.WithTimeout(context.Background(), s.Timeout)
+			defer cancel()
+			return s.ServiceContext.TsNet.Dial(ctx, "tcp", s.ConnectAddress+":"+strconv.Itoa(int(s.ConnectPort)))
 		}, nil
 	default:
 		return nil, fmt.Errorf("invalid connect address type: %v", s.ConnectType)
