@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   push:
 
+env:
+  IMAGE_NAME: menci/tsukasa
+
 jobs:
   build_push:
     name: Build and Push
@@ -13,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -23,9 +28,31 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate Tag List
+        run: |
+          echo "TAGS<<EOF" >> $GITHUB_ENV
+
+          REGISTRIES=(
+              ghcr.io
+          )
+          DATE="$(date +'%Y%m%d')"
+          for REGISTRY in "${REGISTRIES[@]}"; do
+              echo $REGISTRY/$IMAGE_NAME:$DATE.$RUN_ID >> $GITHUB_ENV
+              GIT_TAGS=$(git tag --points-at HEAD)
+              if [[ "$GIT_TAGS" != "" ]]; then
+                  for GIT_TAG in $GIT_TAGS; do
+                      echo $REGISTRY/$IMAGE_NAME:$GIT_TAG >> $GITHUB_ENV
+                  done
+                  echo $REGISTRY/$IMAGE_NAME:latest >> $GITHUB_ENV
+              fi
+          done
+
+          echo "EOF" >> $GITHUB_ENV
+        env:
+          RUN_ID: ${{ github.run_id }}
       - name: Build Container Image
         uses: docker/build-push-action@v6
         with:
           platforms: linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/riscv64
           push: true
-          tags: ghcr.io/menci/tsukasa:latest
+          tags: ${{ env.TAGS }}
