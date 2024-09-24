@@ -298,6 +298,8 @@ func GetConfig() (*Config, error) {
 		} else {
 			c.Timeout = timeout
 		}
+	} else {
+		c.Timeout = 10 * time.Second
 	}
 
 	if c.Tailscale.AuthKey == "" {
